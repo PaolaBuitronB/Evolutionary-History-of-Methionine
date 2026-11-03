@@ -1,0 +1,265 @@
+#######################################################################
+#-------------------------------ENC PLOT -----------------------------#
+################################ENC####################################
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# 1. Verificar tipos de datos - PASO CRÍTICO
+str(Met_ENC)
+
+# Forzar conversión numérica por si vienen como texto
+Met_ENC$GC3s <- as.numeric(Met_ENC$GC3s)
+Met_ENC$ENC  <- as.numeric(Met_ENC$ENC)
+
+# Verificar rangos reales
+range(Met_ENC$GC3s, na.rm = TRUE)
+range(Met_ENC$ENC, na.rm = TRUE)
+
+# 2. Función de la curva esperada de Wright (1990)
+#    Tu GC3s está en escala 0-100, así que la función divide entre 100
+wright_curve <- function(gc3s) {
+  gc3s <- gc3s / 100
+  2 + gc3s + 29 / (gc3s^2 + (1 - gc3s)^2)
+}
+
+# 3. Generar puntos para la curva (UNA SOLA VEZ, escala 0-100)
+curve_df <- data.frame(GC3s = seq(0, 100, by = 1))
+curve_df$Nc_esperado <- wright_curve(curve_df$GC3s)
+
+# 4. Armar el gráfico
+enc_plot <- ggplot() +
+  geom_line(data = curve_df, aes(x = GC3s, y = Nc_esperado),
+            color = "#BDBDBD", linewidth = 1, linetype = "solid") +
+  geom_point(data = Met_ENC, 
+             aes(x = GC3s, y = ENC, color = gene, shape = gene),
+             size = 3, alpha = 0.75) +
+  scale_color_manual(values = c( "#3D6FB6", "#C8673F")) +
+  scale_shape_manual(values = c(16, 17, 15, 18)) +
+  scale_y_continuous(limits = c(20, 100), breaks = seq(20, 100, 10)) +
+  scale_x_continuous(limits = c(0, 100)) +
+  labs(
+    title = "ENC-plot: TRANSULFURATION PATHWAY",
+    x = "GC3s (%)",
+    y = "ENC",
+    color = "Gene",
+    shape = "Gene"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+
+enc_plot
+
+#####################################################################
+#SI QUIERO AGREGAR ETIQUETAS
+# LA OPCION PARA COLOCAR ETIQUETAS ES geom text repel
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+enc_plot <- ggplot() +
+  geom_line(data = curve_df, aes(x = GC3s, y = Nc_esperado),
+            color = "#525252", linewidth = 0.8, linetype = "solid") +
+  geom_point(data = Met_ENC, 
+             aes(x = GC3s, y = ENC, color = gene, shape = gene),
+             size = 3, alpha = 0.85) +
+  geom_text_repel(data = Met_ENC,
+                  aes(x = GC3s, y = ENC, label = Organism, color = gene),
+                  size = 2.5, max.overlaps = 20,
+                  show.legend = FALSE,
+                  segment.size = 0.3,
+                  segment.alpha = 0.5) +
+  scale_color_manual(values = c("#C8673F", "#5BB5A2")) +
+  scale_shape_manual(values = c(16, 17, 15, 18)) +
+  scale_y_continuous(limits = c(20, 100), breaks = seq(20, 100, 10)) +
+  scale_x_continuous(limits = c(0, 100)) +
+  labs(
+    title = "ENC-plot: TRANSULFURATION PATHWAY",
+    x = "GC3s (%)",
+    y = "ENC",
+    color = "Gen",
+    shape = "Gen"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+enc_plot
+
+# si quiero etiquetas solo en punto que estan sobre la linea o por fuera
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# 1. Revisar distribución de distancia antes de fijar umbrales
+summary(Met_ENC$distancia)
+
+umbral_cerca <- 5    # |distancia| menor a esto = "sobre la curva"
+umbral_lejos <- 30   # |distancia| mayor a esto = "outlier"
+
+Met_ENC_etiquetas <- Met_ENC %>%
+  filter(abs(distancia) <= umbral_cerca | abs(distancia) >= umbral_lejos)
+
+# Verifica cuántos puntos quedaron etiquetados
+nrow(Met_ENC_etiquetas)
+
+# 2. Graficar
+enc_plot <- ggplot() +
+  geom_line(data = curve_df, aes(x = GC3s, y = Nc_esperado),
+            color = "#c51b8a", linewidth = 0.8, linetype = "solid") +
+  geom_point(data = Met_ENC, 
+             aes(x = GC3s, y = ENC, color = gene, shape = gene),
+             size = 3, alpha = 0.85) +
+  geom_text_repel(data = "Organism",
+                  aes(x = GC3s, y = ENC, label = Organism, color = gene),
+                  size = 2.5, max.overlaps = 20,
+                  show.legend = FALSE,
+                  segment.size = 0.3,
+                  segment.alpha = 0.5) +
+  scale_color_manual(values = c("#756bb1", "#1c9099", "#31a354", "#e6550d")) +
+  scale_shape_manual(values = c(16, 17, 15, 18)) +
+  scale_y_continuous(limits = c(20, 100), breaks = seq(20, 100, 10)) +
+  scale_x_continuous(limits = c(0, 100)) +
+  labs(
+    title = "ENC-plot: CYSTEINE PATHWAY",
+    x = "GC3s (%)",
+    y = "ENC",
+    color = "Gen",
+    shape = "Gen"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+enc_plot
+
+length(unique(Met_ENC$gene))
+unique(Met_ENC$gene)
+
+# etiquetas sobre los puntos que se encuentran por fuera de linea de wright 
+
+#-----------------------------------------------------
+#CON LA MISMA TABLE DE ENC PLOT VOY HACER NEUTRALIDAD
+########################---- NEUTRALIDAD ----#########
+#-----------------------------------------------------
+library(ggplot2)
+library(dplyr)
+
+## Cálculo de la pendiente
+modelo <- lm(GC12 ~ GC3, data = Met_ENC)
+subtitulo <- sprintf("Pendiente = %.3f   |   R² = %.3f",
+                     coef(modelo)[2], summary(modelo)$r.squared)
+
+## NEUTRALIDAD GENERAL REGRESION LINEAL
+neutrality_plot_general <- ggplot(Met_ENC, aes(x = GC3, y = GC12)) +
+  geom_point(aes(color = gene, shape = gene), size = 3, alpha = 0.85) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue", linewidth = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_manual(values = c("#662506", "#ec7014", "#225ea8", "#969696")) +
+  scale_shape_manual(values = c(16, 17, 15, 18)) +
+  labs(
+    title = "Neutrality plot: GC12 vs GC3",
+    subtitle = subtitulo,
+    x = "GC3 (%)",
+    y = "GC12 (%)",
+    color = "Gen",
+    shape = "Gen"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+neutrality_plot_general
+
+
+
+#---------------------------------------------
+#........    CARGAR LA TABLA DE PR2 ..........
+#---------------------------------------------
+################ ----- PLOTS ------ #######
+
+#Comparacion de GC1 , GC2 , GC3 
+       library(tidyr)
+       gc_long <- pivot_longer(Met_ENC, cols = c(GC1, GC2, GC3), names_to = "posicion", values_to = "valor")
+       ggplot(gc_long, aes(x = posicion, y = valor)) +
+         geom_boxplot(fill = "#756bb1", "#1c9099", "#31a354") +
+         geom_jitter(width = 0.1, alpha = 0.6) +
+         labs(y = "GC content (%)", x = "Codon position") +
+         theme_minimal()
+       
+###### PARITY PLOT ####
+       
+       #calcular pr2 ratios
+       Met_ENC$A3_ratio <- Met_ENC$A3 / (Met_ENC$A3 + Met_ENC$T3)
+       Met_ENC$G3_ratio <- Met_ENC$G3 / (Met_ENC$G3 + Met_ENC$C3)
+       
+library(dplyr)
+       
+       centroides <- Met_ENC %>%
+         group_by(gene) %>%
+         summarise(
+           A3_ratio_mean = mean(A3_ratio, na.rm = TRUE),
+           G3_ratio_mean = mean(G3_ratio, na.rm = TRUE)
+         )
+       
+       centroides
+       
+#graficar
+       library(ggplot2)
+       
+       breaks_vals <- c(0.0,0.25, 0.50, 0.75, 1.0)
+       tick_len <- 0.02  # largo de las marquitas (ajustable)
+       
+       # Data frames para las marcas (ticks) del eje X e Y
+       ticks_x <- data.frame(x = breaks_vals, y0 = 0.5 - tick_len, y1 = 0.5 + tick_len)
+       ticks_y <- data.frame(y = breaks_vals, x0 = 0.5 - tick_len, x1 = 0.5 + tick_len)
+       
+       pr2_plot <- ggplot() +
+         # Líneas de los ejes cruzados en el centro, ahora de 0 a 1
+         geom_segment(aes(x = 0, xend = 1, y = 0.5, yend = 0.5), color = "black", linewidth = 0.6) +
+         geom_segment(aes(x = 0.5, xend = 0.5, y = 0, yend = 1), color = "black", linewidth = 0.6) +
+         # Ticks (marcas perpendiculares) en cada número del eje X
+         geom_segment(data = ticks_x, aes(x = x, xend = x, y = y0, yend = y1), 
+                      color = "black", linewidth = 0.5) +
+         # Ticks en cada número del eje Y
+         geom_segment(data = ticks_y, aes(x = x0, xend = x1, y = y, yend = y), 
+                      color = "black", linewidth = 0.5) +
+         # Números del eje X
+         annotate("text", x = breaks_vals, y = 0.5 - tick_len - 0.03, 
+                  label = breaks_vals, size = 3.2, vjust = 1) +
+         # Números del eje Y
+         annotate("text", x = 0.5 - tick_len - 0.03, y = breaks_vals, 
+                  label = breaks_vals, size = 3.2, hjust = 1) +
+         # Puntos de los organismos
+         geom_point(data = Met_ENC, 
+                    aes(x = G3_ratio, y = A3_ratio, color = gene, shape = gene),
+                    size = 2.5, alpha = 0.7) +
+         # Centroides
+         geom_point(data = centroides, 
+                    aes(x = G3_ratio_mean, y = A3_ratio_mean, color = gene),
+                    size = 6, shape = 8, stroke = 1.5) +
+         scale_color_manual(values = c("#756bb1", "#1c9099", "#31a354", "#e6550d")) +
+         scale_shape_manual(values = c(16, 17, 15, 18)) +
+         scale_x_continuous(limits = c(0, 1)) +
+         scale_y_continuous(limits = c(0, 1)) +
+         coord_fixed() +
+         labs(title = "PR2-plot: Cysteine pathway",
+              x = "G3/(G3+C3)", y = "A3/(A3+U3)",
+              color = "Gene", shape = "Gene") +
+         theme_void(base_size = 11) +
+         theme(
+           plot.title = element_text(face = "bold", hjust = 0.5),
+           axis.title.x = element_text(face = "bold", margin = margin(t = 10)),
+           axis.title.y = element_text(face = "bold", angle = 90, margin = margin(r = 10)),
+           plot.background = element_rect(fill = "white", color = NA),
+           legend.title = element_text(face = "bold")
+         )
+       
+       pr2_plot
