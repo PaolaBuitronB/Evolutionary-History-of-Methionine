@@ -1,0 +1,203 @@
+# =============================================================================
+# HEATMAP RSCU — via Met-Cis en kinetoplastidos
+# Version para la tabla UNICA en formato largo:
+#   gen | organismo | estilo_vida | via | TTT | TTC | ... | GGG   (59 codones)
+# -----------------------------------------------------------------------------
+# Mantiene:
+#   1) codones (con su aminoacido) ARRIBA
+#   2) codones AGRUPADOS por familia de sinonimos (F, L, I, V, S, ...)
+#   3) las MISMAS especies, en el MISMO orden, en todos los genes
+#   4) genes ordenados por modulo: Metionina -> Transulfuracion -> Cisteina
+#
+#   install.packages("BiocManager"); BiocManager::install("ComplexHeatmap")
+# =============================================================================
+
+library(readxl)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+# -----------------------------------------------------------------------------
+# 1. LEER LA TABLA
+# -----------------------------------------------------------------------------
+datos <- read_excel("R/rscu_todos.xlsx")        # o: read.csv("rscu_todos.csv")
+datos <- as.data.frame(datos)
+names(datos) <- trimws(names(datos))
+
+# -----------------------------------------------------------------------------
+# 2. CODONES + AMINOACIDO
+# -----------------------------------------------------------------------------
+codones <- c(
+  "TTT (F)","TTC (F)","TTA (L)","TTG (L)","CTT (L)","CTC (L)","CTA (L)","CTG (L)",
+  "ATT (I)","ATC (I)","ATA (I)","GTT (V)","GTC (V)","GTA (V)","GTG (V)","TCT (S)",
+  "TCC (S)","TCA (S)","TCG (S)","AGT (S)","AGC (S)","CCT (P)","CCC (P)","CCA (P)",
+  "CCG (P)","ACT (T)","ACC (T)","ACA (T)","ACG (T)","GCT (A)","GCC (A)","GCA (A)",
+  "GCG (A)","TAT (Y)","TAC (Y)","CAT (H)","CAC (H)","CAA (Q)","CAG (Q)","AAT (N)",
+  "AAC (N)","AAA (K)","AAG (K)","GAT (D)","GAC (D)","GAA (E)","GAG (E)","TGT (C)",
+  "TGC (C)","CGT (R)","CGC (R)","CGA (R)","CGG (R)","AGA (R)","AGG (R)","GGT (G)",
+  "GGC (G)","GGA (G)","GGG (G)")
+tripl  <- substr(codones, 1, 3)
+aa     <- sub(".*\\((.)\\)", "\\1", codones)
+aa_fac <- factor(aa, levels = unique(aa))
+
+falta <- setdiff(tripl, names(datos))
+if (length(falta)) stop("Faltan columnas de codones: ", paste(falta, collapse = ", "))
+
+# -----------------------------------------------------------------------------
+# 3. LIMPIEZA Y ORDEN DE LA VIA
+# -----------------------------------------------------------------------------
+datos$gen       <- tolower(trimws(datos$gen))
+datos$organismo <- gsub("\\s+", " ", trimws(gsub("_", " ", datos$organismo)))
+
+# etiquetas de la figura <- nombres tal como aparecen en la columna 'gen'
+mapa_gen <- c(ademets = "ADEMET",  ademet = "ADEMET",   adomets = "ADEMET",
+              adohcysh = "ADOHCYSH", hcysh = "ADOHCYSH", adehcysh = "ADOHCYSH",
+              hmt = "HMT", hmt1 = "HMT1", hmt2 = "HMT2",
+              cbs = "CBS", cgl = "CGL", cbl = "CBL",
+              cs = "CS", sat = "SAT", cd = "CD1", cd1 = "CD1", cd2 = "CD2")
+
+sin_mapear <- setdiff(unique(datos$gen), names(mapa_gen))
+if (length(sin_mapear)) message("Genes sin equivalencia en 'mapa_gen': ",
+                                paste(sin_mapear, collapse = ", "))
+datos$gen_lab <- unname(mapa_gen[datos$gen])
+
+orden_gen <- c("ADEMET","ADOHCYSH","HMT","HMT1","HMT2",   # Metionina
+               "CBS","CGL","CBL",                          # Transulfuracion
+               "CS","SAT","CD1","CD2")                     # Cisteina
+modulo <- c(ADEMET="Metionina", ADOHCYSH="Metionina", HMT="Metionina",
+            HMT1="Metionina", HMT2="Metionina",
+            CBS="Transulfuracion", CGL="Transulfuracion", CBL="Transulfuracion",
+            CS="Cisteina", SAT="Cisteina", CD1="Cisteina", CD2="Cisteina")
+
+orden_gen <- orden_gen[orden_gen %in% datos$gen_lab]       # solo los que existen
+cat("Genes incluidos:", paste(orden_gen, collapse = " > "), "\n")
+
+# Filas totalmente vacias (las bandas grises de la planilla) -> fuera
+vacia <- rowSums(!is.na(sapply(datos[, tripl], as.numeric))) == 0
+if (any(vacia)) message("Filas sin datos descartadas: ", sum(vacia))
+datos <- datos[!vacia & !is.na(datos$gen_lab), ]
+
+# -----------------------------------------------------------------------------
+# 4. MISMAS ESPECIES EN TODOS LOS GENES
+# -----------------------------------------------------------------------------
+# Diagnostico: que organismo aparece en que gen (0 = ausente)
+print(table(datos$organismo, factor(datos$gen_lab, levels = orden_gen)))
+
+lista_sp  <- split(datos$organismo, factor(datos$gen_lab, levels = orden_gen))
+cobertura <- sort(table(unlist(lapply(lista_sp, unique))), decreasing = TRUE)
+
+comunes      <- Reduce(intersect, lista_sp)                      # A: estricta
+min_genes    <- length(orden_gen) - 2                            # B: flexible
+comunes_flex <- names(cobertura)[cobertura >= min_genes]
+
+especies <- comunes                    # <- cambia a comunes_flex si A queda corta
+cat("Especies retenidas:", length(especies), "\n"); stopifnot(length(especies) > 1)
+
+# -----------------------------------------------------------------------------
+# 5. MATRICES POR GEN + z-score DENTRO DE CADA FAMILIA DE SINONIMOS
+# -----------------------------------------------------------------------------
+subset_sp <- function(m, sp) {
+  out <- matrix(NA_real_, length(sp), ncol(m), dimnames = list(sp, colnames(m)))
+  hay <- intersect(sp, rownames(m)); out[hay, ] <- m[hay, ]; out
+}
+zfam <- function(m) {                  # compara cada codon contra sus sinonimos
+  z <- m
+  for (a in unique(aa)) {
+    j <- which(aa == a); sub <- m[, j, drop = FALSE]
+    s <- sd(sub, na.rm = TRUE)
+    z[, j] <- (sub - mean(sub, na.rm = TRUE)) / ifelse(is.na(s) || s == 0, 1, s)
+  }
+  z
+}
+# alternativa clasica (= scale = "row" de pheatmap):
+zrow <- function(m) { z <- t(scale(t(m))); z[is.na(z)] <- 0; z }
+
+mats <- lapply(orden_gen, function(g) {
+  d <- datos[datos$gen_lab == g, ]
+  m <- as.matrix(sapply(d[, tripl], as.numeric))
+  rownames(m) <- d$organismo; colnames(m) <- tripl
+  m <- m[!duplicated(rownames(m)), , drop = FALSE]
+  zfam(subset_sp(m, especies))
+})
+names(mats) <- orden_gen
+
+# -----------------------------------------------------------------------------
+# 6. UN SOLO ORDEN DE ESPECIES PARA TODOS LOS BLOQUES
+#    (clustering sobre el promedio de los genes; NO se clusteriza dentro de cada
+#     bloque, si no cada gen quedaria con un orden distinto)
+# -----------------------------------------------------------------------------
+prom <- Reduce(`+`, lapply(mats, function(m) { m[is.na(m)] <- 0; m })) / length(mats)
+ord  <- hclust(as.dist(1 - cor(t(prom))), method = "ward.D2")$order
+especies <- especies[ord]
+# Alternativa: agrupar por estilo de vida ->
+# especies <- especies[order(estilo[especies], especies)]
+
+mats <- lapply(mats, function(m) m[especies, , drop = FALSE])
+
+mat <- do.call(rbind, mats)
+rownames(mat) <- rep(especies, times = length(mats))
+gen_fac <- factor(rep(orden_gen, each = length(especies)), levels = orden_gen)
+mod_fac <- factor(modulo[as.character(gen_fac)],
+                  levels = c("Metionina","Transulfuracion","Cisteina"))
+
+# estilo de vida: un valor por organismo
+estilo <- tapply(datos$estilo_vida, datos$organismo,
+                 function(x) names(sort(table(x), decreasing = TRUE))[1])
+est_fac <- factor(rep(unname(estilo[especies]), times = length(mats)))
+
+# -----------------------------------------------------------------------------
+# 7. HEATMAP
+# -----------------------------------------------------------------------------
+col_fun <- colorRamp2(c(-1.6, 0, 1.6), c("gray40", "white", "purple"))
+col_mod <- c(Metionina = "#2f7fb8", Transulfuracion = "#e08214", Cisteina = "#4daf4a")
+col_est <- setNames(c("#7b3294","#c2a5cf","#a6dba0","#008837")[seq_along(levels(est_fac))],
+                    levels(est_fac))
+
+ht <- Heatmap(
+  mat,
+  name = "RSCU\n(z dentro de\ncada familia)",
+  col = col_fun, na_col = "grey85",
+  
+  # --- columnas: agrupadas por aminoacido, etiquetas arriba, sin clustering ---
+  column_split          = aa_fac,
+  cluster_columns       = FALSE,
+  cluster_column_slices = FALSE,
+  column_labels         = tripl,
+  column_names_side     = "top",
+  column_names_rot      = 90,
+  column_names_gp       = gpar(fontsize = 7, fontfamily = "mono"),
+  column_title_side     = "bottom",              # la letra del aminoacido, abajo
+  column_title_gp       = gpar(fontsize = 11, fontface = "bold"),
+  column_gap            = unit(1, "mm"),
+  
+  # --- filas: un bloque por gen, mismo orden de especies en todos ---
+  row_split          = gen_fac,
+  cluster_rows       = FALSE,                    # CLAVE: orden fijo y compartido
+  cluster_row_slices = FALSE,
+  row_title_rot      = 0,
+  row_title_gp       = gpar(fontsize = 10, fontface = "bold"),
+  row_names_gp       = gpar(fontsize = 7, fontface = "italic"),
+  row_gap            = unit(1.6, "mm"),
+  
+  left_annotation = rowAnnotation(
+    Via = mod_fac, Estilo = est_fac,
+    col = list(Via = col_mod, Estilo = col_est),
+    show_annotation_name = FALSE, width = unit(7, "mm"),
+    annotation_legend_param = list(Via    = list(title = "Modulo de la via"),
+                                   Estilo = list(title = "Estilo de vida"))
+  ),
+  
+  rect_gp = gpar(col = "grey88", lwd = 0.3),
+  width   = unit(ncol(mat) * 4.5, "mm"),
+  height  = unit(nrow(mat) * 3.5, "mm")
+)
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right",
+     merge_legend = TRUE)
+
+# -----------------------------------------------------------------------------
+# 8. EXPORTAR
+# -----------------------------------------------------------------------------
+# pdf("heatmap_rscu_via_metcys.pdf", width = 18, height = 0.16 * nrow(mat) + 5)
+# draw(ht, heatmap_legend_side = "right", merge_legend = TRUE)
+# dev.off()
