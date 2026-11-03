@@ -1,0 +1,277 @@
+# =============================================================================
+#  VARIACION DE GC1, GC2 y GC3 POR ENZIMA Y ORGANISMO  -  grafico de diamantes
+#  v4: la tabla se importa antes con Import Dataset (o read_excel) y el script
+#      la toma del Environment.
+#
+#  PASO PREVIO:
+#    RStudio > Environment > Import Dataset > From Excel...
+#    elegis el archivo, la HOJA en "Sheet", y Import.
+#    (o bien:  library(readxl); mi_tabla <- read_excel("R/tabla_GC.xlsx", sheet = 1) )
+#
+#  Columnas necesarias: Organism | gene | GC1 | GC2 | GC3
+# =============================================================================
+
+library(ggplot2)
+install.packages(c("ggplot2", "dplyr", "tidyr", "scales"))
+# ---- 0. Paquetes ------------------------------------------------------------
+paquetes <- c("ggplot2", "dplyr", "tidyr", "scales")
+faltan   <- paquetes[!paquetes %in% rownames(installed.packages())]
+if (length(faltan) > 0) install.packages(faltan, repos = "https://cloud.r-project.org")
+invisible(lapply(paquetes, library, character.only = TRUE))
+
+
+# =============================================================================
+#  1. CONFIGURACION
+# =============================================================================
+
+# --- 1.1 Objeto importado ---------------------------------------------------
+# Poner aca el nombre que quedo en el Environment despues de Import Dataset.
+DATOS <- Met_ENC
+
+# --- 1.2 Ranuras: que gen va en cada fila dentro de cada organismo ----------
+RANURAS <- list(
+  "SAT"   = "SAT",
+  "CS"    = "CS",
+  "CD1"   = "CD1",
+  "CD2"   = "CD2"
+)
+
+
+
+# --- 1.3 Orden de los organismos (NULL = alfabetico) -----------------------
+ORDEN_ORGANISMOS <- c("Bodo_saltans", 
+                      "Paratrypanosoma_confusum",
+                      "Trypanosoma_grayi",
+                      "Trypanosoma_rangeli",
+                      "Trypanosoma_cruzi",
+                      "Trypanosoma_brucei_gambiense",
+                      "Blechomonas_ayalai",
+                      "Leishmania_braziliensis",
+                      "Leishmania_tarentolae",
+                      "Leishmania_major",
+                      "Strigomonas_galati",
+                      "Angomonas_deanei",
+                      "Vickermania_ingenoplastis",
+                      "Crithidia_fasciculata"
+)
+
+
+# --- 1.4 Colores ------------------------------------------------------------
+COLORES_POS <- c(GC1 = "#1B9E77", GC2 = "#7570B3", GC3 = "#D95F02")
+
+COLORES_GENES <- c(          # color del texto de cada gen
+  SAT  = "#2166AC",
+  CS   = "#B2182B",
+  CD1     = "#1A9850",
+  CD2     = "#E08214"
+)
+
+COLORES_GENES <- c(          # color del texto de cada gen
+  CBS   = "#2166AC",
+  CGL   = "#B2182B"
+)
+
+
+
+COLOR_GEN_DEFECTO <- "#444444"
+COLOR_AUSENTE     <- "#C8C8C8"
+
+# --- 1.5 Apariencia ---------------------------------------------------------
+MOSTRAR_AUSENTES <- TRUE
+MOSTRAR_BANDAS   <- TRUE
+BANDA_MIN <- 0.10; BANDA_MAX <- 0.90
+FRANJA_ORGANISMO <- TRUE
+TAM_DIAMANTE <- 3.4; TAM_ETIQ_GEN <- 2.4; TAM_ETIQ_ORG <- 9.5
+CURSIVA_ORG <- TRUE
+
+TITULO   <- "Variacion de GC1, GC2 y GC3 por enzima y organismo"
+SALIDA   <- "figuras"
+NOMBRE   <- "diamantes_GC"
+FORMATOS <- c("png", "pdf")
+ANCHO <- 10.5; DPI <- 400
+
+
+# =============================================================================
+#  2. PREPARACION DE LA TABLA IMPORTADA
+# =============================================================================
+
+datos <- as.data.frame(DATOS)
+
+# --- nombres de columna: acepta variantes y el typo "lenght" ---------------
+nm <- tolower(trimws(names(datos)))
+mapa <- c(organism = "Organism", organismo = "Organism", especie = "Organism",
+          species = "Organism",
+          gene = "gene", gen = "gene", enzima = "gene",
+          gc1 = "GC1", gc2 = "GC2", gc3 = "GC3",
+          enc = "ENC", length = "length", lenght = "length", largo = "length")
+names(datos) <- ifelse(nm %in% names(mapa), mapa[nm], names(datos))
+
+necesarias <- c("Organism", "gene", "GC1", "GC2", "GC3")
+if (!all(necesarias %in% names(datos)))
+  stop("Faltan columnas: ", paste(setdiff(necesarias, names(datos)), collapse = ", "),
+       "\nLa tabla tiene: ", paste(names(datos), collapse = ", "))
+
+# --- caracter -> numerico SOLO en las columnas de valores ------------------
+# (Organism y gene son texto: convertirlas las volveria NA)
+a_numero <- function(x) {
+  if (is.numeric(x)) return(x)
+  as.numeric(gsub(",", ".", gsub("[[:space:]]", "", as.character(x))))
+}
+num_cols <- intersect(c("GC1", "GC2", "GC3", "ENC", "length"), names(datos))
+datos[num_cols] <- lapply(datos[num_cols], a_numero)
+
+datos$Organism <- trimws(as.character(datos$Organism))
+datos$gene     <- trimws(as.character(datos$gene))
+
+n0 <- nrow(datos)
+datos <- datos[stats::complete.cases(datos[, c("GC1", "GC2", "GC3")]), ]
+if (nrow(datos) < n0)
+  message("Se descartaron ", n0 - nrow(datos), " filas sin valores de GC ",
+          "(revisar si eran celdas vacias o texto).")
+
+message("Tabla lista: ", nrow(datos), " filas | ",
+        length(unique(datos$Organism)), " organismos | genes: ",
+        paste(sort(unique(datos$gene)), collapse = ", "))
+
+
+# =============================================================================
+#  3. ARMADO DE LAS FILAS
+# =============================================================================
+
+if (is.null(ORDEN_ORGANISMOS)) ORDEN_ORGANISMOS <- sort(unique(datos$Organism))
+ORDEN_ORGANISMOS <- ORDEN_ORGANISMOS[ORDEN_ORGANISMOS %in% datos$Organism]
+extra <- setdiff(unique(datos$Organism), ORDEN_ORGANISMOS)
+if (length(extra) > 0) {
+  message("Organismos no listados en ORDEN_ORGANISMOS (van al final): ",
+          paste(extra, collapse = ", "))
+  ORDEN_ORGANISMOS <- c(ORDEN_ORGANISMOS, sort(extra))
+}
+genes_sueltos <- setdiff(unique(datos$gene), unlist(RANURAS))
+if (length(genes_sueltos) > 0)
+  message("OJO: genes presentes en la tabla pero no en RANURAS (no se dibujan): ",
+          paste(genes_sueltos, collapse = ", "))
+
+filas <- list(); centros <- numeric(0); bandas_org <- list()
+y <- 0; SEP <- 0.5
+
+for (i in seq_along(ORDEN_ORGANISMOS)) {
+  org <- ORDEN_ORGANISMOS[i]
+  sub <- datos[datos$Organism == org, ]
+  y0  <- y
+  for (ranura in names(RANURAS)) {
+    s <- sub[sub$gene %in% RANURAS[[ranura]], ]
+    if (nrow(s) > 0) {
+      r <- s[1, ]
+      filas[[length(filas) + 1]] <- data.frame(
+        Organism = org, ranura = ranura, gene = r$gene, etiqueta = r$gene,
+        presente = TRUE, y = y, GC1 = r$GC1, GC2 = r$GC2, GC3 = r$GC3,
+        stringsAsFactors = FALSE)
+    } else {
+      filas[[length(filas) + 1]] <- data.frame(
+        Organism = org, ranura = ranura, gene = NA, etiqueta = ranura,
+        presente = FALSE, y = y, GC1 = NA, GC2 = NA, GC3 = NA,
+        stringsAsFactors = FALSE)
+    }
+    y <- y - 1
+  }
+  centros <- c(centros, (y0 + y + 1) / 2)
+  if (i %% 2 == 1)
+    bandas_org[[length(bandas_org) + 1]] <- data.frame(ymin = y + 0.5, ymax = y0 + 0.5)
+  y <- y - SEP
+}
+
+F <- do.call(rbind, filas)
+bandas_org <- if (FRANJA_ORGANISMO && length(bandas_org) > 0)
+  do.call(rbind, bandas_org) else NULL
+
+F$color_etiq <- ifelse(!F$presente, COLOR_AUSENTE,
+                       ifelse(F$gene %in% names(COLORES_GENES),
+                              COLORES_GENES[F$gene], COLOR_GEN_DEFECTO))
+
+P <- F[F$presente, ]
+if (nrow(P) == 0) stop("Ningun gen de RANURAS coincide con la columna 'gene'.")
+
+largo <- tidyr::pivot_longer(P[, c("Organism", "ranura", "y", "GC1", "GC2", "GC3")],
+                             cols = c("GC1", "GC2", "GC3"),
+                             names_to = "posicion", values_to = "valor")
+largo$posicion <- factor(largo$posicion, levels = c("GC1", "GC2", "GC3"))
+
+rangos <- data.frame(y = P$y,
+                     xmin = pmin(P$GC1, P$GC2, P$GC3),
+                     xmax = pmax(P$GC1, P$GC2, P$GC3))
+
+vals  <- c(P$GC1, P$GC2, P$GC3)
+x_ini <- min(vals); x_fin <- max(vals); amp <- x_fin - x_ini
+X_ETIQ  <- x_ini - 0.13 * amp
+X_MEDIO <- (x_ini + x_fin) / 2
+lim_x   <- c(X_ETIQ - 0.06 * amp, x_fin + 0.03 * amp)
+
+bandas_pos <- do.call(rbind, lapply(c("GC1", "GC2", "GC3"), function(p) {
+  q <- stats::quantile(largo$valor[largo$posicion == p],
+                       c(BANDA_MIN, BANDA_MAX), na.rm = TRUE)
+  data.frame(posicion = p, q1 = q[1], q3 = q[2])
+}))
+bandas_pos$posicion <- factor(bandas_pos$posicion, levels = c("GC1", "GC2", "GC3"))
+
+
+# =============================================================================
+#  4. GRAFICO
+# =============================================================================
+
+etiq_org <- gsub("_", " ", ORDEN_ORGANISMOS)
+p <- ggplot()
+
+if (!is.null(bandas_org))
+  p <- p + geom_rect(data = bandas_org,
+                     aes(xmin = -Inf, xmax = Inf, ymin = ymin, ymax = ymax),
+                     fill = "#F7F7F7")
+
+if (MOSTRAR_BANDAS)
+  p <- p + geom_rect(data = bandas_pos,
+                     aes(xmin = q1, xmax = q3, ymin = -Inf, ymax = Inf, fill = posicion),
+                     alpha = 0.09, colour = NA, show.legend = FALSE)
+
+p <- p +
+  geom_segment(data = rangos, aes(x = xmin, xend = xmax, y = y, yend = y),
+               colour = "#B0B0B0", linewidth = 0.45) +
+  geom_point(data = largo, aes(x = valor, y = y, fill = posicion),
+             shape = 23, size = TAM_DIAMANTE, colour = "#2B2B2B", stroke = 0.35) +
+  geom_text(data = F, aes(x = X_ETIQ, y = y, label = etiqueta),
+            colour = F$color_etiq, hjust = 1, size = TAM_ETIQ_GEN)
+
+if (MOSTRAR_AUSENTES && any(!F$presente))
+  p <- p + geom_text(data = F[!F$presente, ], aes(x = X_MEDIO, y = y),
+                     label = "ausente", colour = COLOR_AUSENTE,
+                     size = TAM_ETIQ_GEN, fontface = "italic")
+
+p <- p +
+  scale_fill_manual(values = COLORES_POS, name = NULL) +
+  scale_y_continuous(breaks = centros, labels = etiq_org, expand = expansion(add = 1)) +
+  scale_x_continuous(limits = lim_x,
+                     breaks = scales::pretty_breaks(7)(c(x_ini, x_fin))) +
+  labs(title = TITULO, x = "% GC", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank(),
+        panel.grid.major.x = element_line(colour = "#E9E9E9", linewidth = 0.4),
+        axis.text.y = element_text(size = TAM_ETIQ_ORG,
+                                   face = if (CURSIVA_ORG) "italic" else "plain",
+                                   hjust = 1),
+        axis.ticks = element_blank(),
+        plot.title = element_text(face = "bold", hjust = 0.5, size = 13),
+        legend.position = "top",
+        legend.key.size = unit(0.5, "cm")) +
+  guides(fill = guide_legend(override.aes = list(size = 4)))
+
+
+# =============================================================================
+#  5. GUARDAR
+# =============================================================================
+
+if (!dir.exists(SALIDA)) dir.create(SALIDA, recursive = TRUE)
+alto <- max(4, length(ORDEN_ORGANISMOS) * (length(RANURAS) * 0.21 + 0.13) + 1.4)
+for (fmt in FORMATOS)
+  ggsave(file.path(SALIDA, paste0(NOMBRE, ".", fmt)), p,
+         width = ANCHO, height = alto, dpi = DPI, limitsize = FALSE)
+print(p)
+message("Listo. Figuras en: ", normalizePath(SALIDA))
